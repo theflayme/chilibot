@@ -1,8 +1,6 @@
 import discord
 from discord.ext import commands
 import asyncio
-import uvicorn
-import threading
 import os
 
 from dotenv import load_dotenv
@@ -19,7 +17,6 @@ from src.database import (
 from src.views import ApplyButtonView, ApplicationView
 from src.commands import setup_commands
 from src.utils import clear_old_states
-from src.api import app, set_bot_instance
 
 class BotManager:
     def __init__(self):
@@ -46,7 +43,6 @@ class BotManager:
         except Exception as e:
             print(f"❌ Ошибка при инициализации данных: {e}")
         
-        set_bot_instance(self.bot)
         self._add_persistent_views()
         await self._restore_application_views()
         
@@ -161,27 +157,12 @@ class BotManager:
     def run(self):
         self.bot.run(self.bot_token)
 
-class APIServer:
-    def __init__(self):
-        self.app = app
-        self.host = "0.0.0.0"
-        self.port = 8000
-
-    def run(self):
-        uvicorn.run(self.app, host=self.host, port=self.port, log_level="info")
-
 class Application:
     def __init__(self):
         self.bot_manager = BotManager()
-        self.api_server = APIServer()
 
     def run(self):
-        print("🚀 Запуск бота и API сервера...")
-        
-        api_thread = threading.Thread(target=self.api_server.run, daemon=True)
-        api_thread.start()
-        print("🌐 API сервер запущен на http://localhost:8000")
-        
+        print("🚀 Запуск бота...")
         self.bot_manager.run()
 
 if __name__ == "__main__":

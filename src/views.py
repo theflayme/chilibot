@@ -226,7 +226,7 @@ class CaptMemberManager:
         can_join, error_title = self.validator.can_join(capt_info, interaction.user.id)
         
         if not can_join:
-            description = "Максимальное количество участников: **{max_members}**" if "заполнена" in error_title else "Вы уже являетесь участником этой группы."
+            description = f"Максимальное количество участников: **{max_members}**" if "заполнена" in error_title else "Вы уже являетесь участником этой группы."
             embed = discord.Embed(
                 title=error_title,
                 description=description,
@@ -560,7 +560,13 @@ class ApplicationModal(BaseModal, title="Заявка на вступление"
         }
 
     async def on_submit(self, interaction: discord.Interaction):
-        form_channel_id, approv_channel_id, approver_role_id, _ = get_settings(interaction.guild_id)
+        settings = get_settings(interaction.guild_id)
+        
+        if len(settings) < 3:
+            await self.handle_error(interaction, "Ошибка! Настройки канала не настроены.")
+            return
+        
+        form_channel_id, approv_channel_id, approver_role_id = settings[0], settings[1], settings[2]
         
         if not approv_channel_id:
             await self.handle_error(interaction, "Ошибка! Канал для заявок не настроен.")
@@ -614,7 +620,13 @@ class ApplyButtonView(BaseView):
 
     @discord.ui.button(label="Подать заявку", style=discord.ButtonStyle.blurple, custom_id="apply_button")
     async def apply_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        form_channel_id, approv_channel_id, approver_role_id, _ = get_settings(interaction.guild_id)
+        settings = get_settings(interaction.guild_id)
+        
+        if len(settings) >= 2:
+            form_channel_id, approv_channel_id = settings[0], settings[1]
+        else:
+            await self.handle_error(interaction, "Ошибка! Настройки канала не найдены.")
+            return
         
         if not approv_channel_id:
             await self.handle_error(interaction, "Ошибка! Канал для заявок не настроен.")

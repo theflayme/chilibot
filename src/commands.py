@@ -118,7 +118,7 @@ class CheckRolesCommand(BaseCommand):
             
             self._add_moderator_role_field(embed, interaction.guild, approver_role_id)
             
-            form_channel_id, approv_channel_id, approver_role_id_from_settings, approved_role_id = get_settings(interaction.guild_id)
+            form_channel_id, approv_channel_id, approver_role_id_from_settings, approved_role_id, blacklist_report_channel_id = get_settings(interaction.guild_id)
             
             self._add_approved_role_field(embed, interaction.guild, approved_role_id)
             
@@ -194,7 +194,7 @@ class HelpCommand(CommandHandler):
             ("👥 /giveapprov", "Настроить роли для системы заявок\n*Требует права модератора*"),
             ("🔍 /checkroles", "Проверить настройки ролей\n*Требует права модератора*"),
             ("📋 /createcapt", "Создать группу с ограниченным количеством участников\n*Требует права модератора*"),
-            ("📢 /blacklistreport", "Установить канал для отчетов о блокировках\n*Требует права модератора*"),
+            ("📢 /blacklistchannel", "Установить канал для отчетов о блокировках\n*Требует права модератора*"),
             ("⛔ /blacklist", "Добавить пользователя в черный список семей по ID и игровому ID\n*Требует права модератора*"),
             ("📝 /showblacklist", "Показать черный список семей\n*Требует права модератора*"),
             ("❓ /help", "Показать это сообщение\n*Доступно всем*")
@@ -288,7 +288,7 @@ class CreateCaptCommand(BaseCommand):
         )
 
 
-class BlacklistReportChannelCommand(BaseCommand):
+class BlacklistChannelCommand(BaseCommand):
     @requires_approver()
     async def execute(self, interaction: discord.Interaction, channel: discord.TextChannel):
         try:
@@ -300,7 +300,7 @@ class BlacklistReportChannelCommand(BaseCommand):
             
         except Exception as e:
             await self.handle_error(interaction, "❌ Произошла ошибка при выполнении команды.")
-            print(f"Ошибка в команде blacklistreport: {e}")
+            print(f"Ошибка в команде blacklistchannel: {e}")
 
 
 class BlacklistCommand(BaseCommand):
@@ -483,7 +483,7 @@ class CommandRegistry:
             'createcapt': CreateCaptCommand(bot),
             'blacklist': BlacklistCommand(bot),
             'showblacklist': ShowBlacklistCommand(bot),
-            'blacklistreport': BlacklistReportChannelCommand(bot)
+            'blacklistchannel': BlacklistChannelCommand(bot)
         }
     
     def register_all(self):
@@ -550,14 +550,14 @@ class CommandRegistry:
             await self.commands['createcapt'].execute(interaction, max_members)
 
         @self.bot.tree.command(
-            name="blacklistreport",
+            name="blacklistchannel",
             description="📢 Установить канал для отчетов о блокировках"
         )
         @app_commands.describe(
             channel="Канал для публикации отчетов о блокировках"
         )
-        async def blacklistreport(interaction: discord.Interaction, channel: discord.TextChannel):
-            await self.commands['blacklistreport'].execute(interaction, channel)
+        async def blacklistchannel(interaction: discord.Interaction, channel: discord.TextChannel):
+            await self.commands['blacklistchannel'].execute(interaction, channel)
 
         @self.bot.tree.command(
             name="blacklist",
