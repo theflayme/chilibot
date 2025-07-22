@@ -1,6 +1,7 @@
 import json
 import os
 from dotenv import load_dotenv
+import time
 
 load_dotenv()
 
@@ -16,6 +17,7 @@ class DatabaseManager:
         self.owners_cache = {}
         self.owners = []
         self.capts_cache = {}
+        self.blacklist_cache = {}
     
     def _read_json_file(self, file_path):
         if not os.path.exists(file_path):
@@ -102,10 +104,11 @@ class DatabaseManager:
             guild_data.get('form_channel_id'),
             guild_data.get('approv_channel_id'),
             guild_data.get('approver_role_id'),
-            guild_data.get('approved_role_id')
+            guild_data.get('approved_role_id'),
+            guild_data.get('blacklist_report_channel_id')
         )
     
-    def save_settings(self, guild_id, form_channel_id=None, approv_channel_id=None, approver_role_id=None, approved_role_id=None):
+    def save_settings(self, guild_id, form_channel_id=None, approv_channel_id=None, approver_role_id=None, approved_role_id=None, blacklist_report_channel_id=None):
         self.init_settings()
         guild_id_str = str(guild_id)
         if guild_id_str not in self.settings_cache:
@@ -118,6 +121,8 @@ class DatabaseManager:
             self.settings_cache[guild_id_str]['approver_role_id'] = str(approver_role_id)
         if approved_role_id is not None:
             self.settings_cache[guild_id_str]['approved_role_id'] = str(approved_role_id)
+        if blacklist_report_channel_id is not None:
+            self.settings_cache[guild_id_str]['blacklist_report_channel_id'] = str(blacklist_report_channel_id)
         
         self._write_json_file(self.settings_file, self.settings_cache)
         self.sync_approver_role()
@@ -158,7 +163,6 @@ class DatabaseManager:
         return self.settings_cache
 
     def save_capt(self, guild_id, channel_id, message_id, max_members, current_members=None):
-        """Сохраняет информацию о капте"""
         self.init_settings()
         guild_id_str = str(guild_id)
         if 'capts' not in self.settings_cache:
@@ -174,7 +178,6 @@ class DatabaseManager:
         self._write_json_file(self.settings_file, self.settings_cache)
 
     def get_capt(self, guild_id, message_id):
-        """Получает информацию о капте"""
         self.init_settings()
         guild_id_str = str(guild_id)
         if 'capts' not in self.settings_cache or \
@@ -184,7 +187,6 @@ class DatabaseManager:
         return self.settings_cache['capts'][guild_id_str][str(message_id)]
 
     def add_member_to_capt(self, guild_id, message_id, member_id):
-        """Добавляет участника в капт"""
         self.init_settings()
         capt = self.get_capt(guild_id, message_id)
         if not capt:
@@ -198,7 +200,6 @@ class DatabaseManager:
         return True
 
     def remove_capt(self, guild_id, message_id):
-        """Удаляет капт"""
         self.init_settings()
         guild_id_str = str(guild_id)
         if 'capts' in self.settings_cache and \
@@ -212,7 +213,6 @@ class DatabaseManager:
         return False
 
     def remove_member_from_capt(self, guild_id, message_id, member_id):
-        """Удаляет участника из капта"""
         self.init_settings()
         capt = self.get_capt(guild_id, message_id)
         if not capt:
@@ -226,12 +226,96 @@ class DatabaseManager:
         self._write_json_file(self.settings_file, self.settings_cache)
         return True
 
+    def init_blacklist(self):
+        if 'blacklist' not in self.settings_cache:
+            self.settings_cache['blacklist'] = {}
+            self._write_json_file(self.settings_file, self.settings_cache)
+        self.blacklist_cache = self.settings_cache['blacklist']
+
+    def add_to_blacklist(self, guild_id, user_id, reason, reporter_id, static_id=None):
+        """Добавляет пользователя в черный список"""
+        self.init_settings()
+        self.init_blacklist()
+        guild_id_str = str(guild_id)
+        user_id_str = str(user_id)
+        
+        if guild_id_str not in self.blacklist_cache:
+            self.blacklist_cache[guild_id_str] = {}
+            
+        blacklist_entry = {
+            'reason': reason,
+            'reporter_id': str(reporter_id),
+            'timestamp': str(int(time.time()))
+        }
+        
+        if static_id:
+            blacklist_entry['static_id'] = static_id
+            
+        self.blacklist_cache[guild_id_str][user_id_str] = blacklist_entry
+        
+        self.settings_cache['blacklist'] = self.blacklist_cache
+        self._write_json_file(self.settings_file, self.settings_cache)
+        return True
+
+    def remove_from_blacklist(self, guild_id, user_id):
+        self.init_settings()
+        self.init_blacklist()
+        guild_id_str = str(guild_id)
+        user_id_str = str(user_id)
+        
+        if guild_id_str in self.blacklist_cache and user_id_str in self.blacklist_cache[guild_id_str]:
+            del self.blacklist_cache[guild_id_str][user_id_str]
+            if not self.blacklist_cache[guild_id_str]:
+                del self.blacklist_cache[guild_id_str]
+            
+            self.settings_cache['blacklist'] = self.blacklist_cache
+            self._write_json_file(self.settings_file, self.settings_cache)
+            return True
+        return False
+
+    def is_blacklisted(self, guild_id, user_id):
+        self.init_settings()
+        self.init_blacklist()
+        guild_id_str = str(guild_id)
+        user_id_str = str(user_id)
+        
+        return guild_id_str in self.blacklist_cache and user_id_str in self.blacklist_cache[guild_id_str]
+
+    def get_blacklist(self, guild_id):
+        self.init_settings()
+        self.init_blacklist()
+        guild_id_str = str(guild_id)
+        
+        return self.blacklist_cache.get(guild_id_str, {})
+
+    def get_blacklist_report_channel(self, guild_id):
+        self.init_settings()
+        guild_data = self.settings_cache.get(str(guild_id), {})
+        return guild_data.get('blacklist_report_channel_id')
+
+    @property
+    def settings(self):
+        return self.settings_cache
+
+    @property
+    def applications(self):
+        return self.applications_cache
+
+    @property
+    def owner_data(self):
+        return self.owners_cache
+
+    @property
+    def owner_list(self):
+        return self.owners
+
+
 db = DatabaseManager()
 
-settings_cache = db.settings_cache
-applications_cache = db.applications_cache
-owners_cache = db.owners_cache
-OWNERS = db.owners
+settings_cache = db.settings
+applications_cache = db.applications
+owners_cache = db.owner_data
+OWNERS = db.owner_list
 
 def init_owners():
     return db.init_owners()
@@ -251,8 +335,8 @@ def init_settings():
 def get_settings(guild_id):
     return db.get_settings(guild_id)
 
-def save_settings(guild_id, form_channel_id=None, approv_channel_id=None, approver_role_id=None, approved_role_id=None):
-    return db.save_settings(guild_id, form_channel_id, approv_channel_id, approver_role_id, approved_role_id)
+def save_settings(guild_id, form_channel_id=None, approv_channel_id=None, approver_role_id=None, approved_role_id=None, blacklist_report_channel_id=None):
+    return db.save_settings(guild_id, form_channel_id, approv_channel_id, approver_role_id, approved_role_id, blacklist_report_channel_id)
 
 def init_applications():
     return db.init_applications()
@@ -280,3 +364,21 @@ def remove_capt(guild_id, message_id):
 
 def remove_member_from_capt(guild_id, message_id, member_id):
     return db.remove_member_from_capt(guild_id, message_id, member_id)
+
+def init_blacklist():
+    return db.init_blacklist()
+
+def add_to_blacklist(guild_id, user_id, reason, reporter_id, static_id=None):
+    return db.add_to_blacklist(guild_id, user_id, reason, reporter_id, static_id)
+
+def remove_from_blacklist(guild_id, user_id):
+    return db.remove_from_blacklist(guild_id, user_id)
+
+def is_blacklisted(guild_id, user_id):
+    return db.is_blacklisted(guild_id, user_id)
+
+def get_blacklist(guild_id):
+    return db.get_blacklist(guild_id)
+
+def get_blacklist_report_channel(guild_id):
+    return db.get_blacklist_report_channel(guild_id)
