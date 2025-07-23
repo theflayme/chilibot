@@ -79,3 +79,5 @@ chiliili-firebase.json
 # Бэкапы
 *.bak
 *.backup
+chiliili-firebase.json
+.env
