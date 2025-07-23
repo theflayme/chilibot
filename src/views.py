@@ -1,9 +1,9 @@
 import time
 import discord
 from discord.ui import View, Button, Modal, TextInput
-from src.database import get_settings, save_application, remove_application, save_settings, init_owners, owners_cache, add_member_to_capt, get_capt, remove_capt, remove_member_from_capt
+from src.database_firebase import get_settings, save_application, remove_application, save_settings, init_owners, owners_cache, add_member_to_capt, get_capt, remove_capt, remove_member_from_capt
 from src.permissions import check_approver
-from src.utils import application_state_manager
+from src.utils import get_application_state_service
 
 start_time = time.time()
 
@@ -34,16 +34,16 @@ class ApplicationReviewer:
         self.application_view = application_view
     
     def is_being_reviewed(self, message_id: str, user_id: int) -> tuple[bool, str]:
-        current_reviewer = application_state_manager.get_state(message_id)
-        if current_reviewer and current_reviewer[0] is not None and current_reviewer[0] != user_id:
-            return True, current_reviewer[0]
+        current_reviewer = get_application_state_service().get_state(message_id)
+        if current_reviewer and current_reviewer.user_id is not None and current_reviewer.user_id != user_id:
+            return True, current_reviewer.user_id
         return False, None
     
     def set_reviewer(self, message_id: str, user_id: int):
-        application_state_manager.add_state(message_id, user_id)
+        get_application_state_service().add_state(message_id, user_id)
     
     def clear_reviewer(self, message_id: str):
-        application_state_manager.remove_state(message_id)
+        get_application_state_service().remove_state(message_id)
 
 
 class NotificationSender:
@@ -117,7 +117,7 @@ class EmbedBuilder:
         return embed
 
     @staticmethod
-    def create_capt_embed(current_count: int, max_members: int, members_list: str) -> discord.Embed:
+    def create_capt_embed(current_count: int, max_members: int, members_list: str, timer_minutes: int = None, expires_at: float = None) -> discord.Embed:
         if current_count == max_members:
             color = 0x2ed573
             title_emoji = "✅"
@@ -142,15 +142,22 @@ class EmbedBuilder:
             inline=False
         )
         
-        progress = "🟩" * current_count + "⬜" * (max_members - current_count)
-        embed.add_field(
-            name="📊 Прогресс заполнения",
-            value=f"`{progress}` {current_count}/{max_members}",
-            inline=False
-        )
+        # Добавляем информацию о таймере, если он есть
+        footer_text = ""
+        if timer_minutes and expires_at:
+            import time
+            remaining_seconds = max(0, expires_at - time.time())
+            remaining_minutes = int(remaining_seconds // 60)
+            
+            if remaining_minutes > 0:
+                footer_text = f"⏰ Оставшееся время: {remaining_minutes} минут"
+            else:
+                footer_text = "⏰ Время истекло"
+        elif timer_minutes and not expires_at:
+            footer_text = f"⏰ Автозавершение через {timer_minutes} мин."
         
-        if current_count < max_members:
-            embed.set_footer(text="💡 Нажмите кнопку ниже, чтобы присоединиться или покинуть группу")
+        if footer_text:
+            embed.set_footer(text=footer_text)
         
         return embed
 
@@ -307,9 +314,12 @@ class CaptMemberManager:
         current_count = len(capt_info['current_members'])
         members_list = self.format_members_list(capt_info['current_members'])
         
-        embed = EmbedBuilder.create_capt_embed(current_count, max_members, members_list)
+        timer_minutes = capt_info.get('timer_minutes')
+        expires_at = capt_info.get('expires_at')
         
-        view = CaptView(max_members)
+        embed = EmbedBuilder.create_capt_embed(current_count, max_members, members_list, timer_minutes, expires_at)
+        
+        view = CaptView(max_members, timer_minutes)
         await interaction.message.edit(embed=embed, view=view)
     
     async def _handle_group_completion(self, interaction: discord.Interaction, max_members: int, capt_info: dict):
@@ -360,7 +370,7 @@ class DenyReasonModal(BaseModal, title="Причина отказа"):
 
         await self.message.edit(embed=embed, view=new_view)
 
-        application_state_manager.remove_state(self.message_id)
+        get_application_state_service().remove_state(self.message_id)
         
         remove_application(interaction.guild_id, self.message_id)
 
@@ -577,15 +587,22 @@ class ApplicationModal(BaseModal, title="Заявка на вступление"
             await self.handle_error(interaction, "Ошибка: канал для заявок не найден.")
             return
 
+        # Обновляем данные владельцев для получения актуальных ролей
         init_owners()
         guild_id_str = str(interaction.guild_id)
-        approver_role_id = owners_cache.get('approver_role_ids', {}).get(guild_id_str)
+        
+        # Получаем актуальные данные кэша
+        owner_data = owners_cache()
+        approver_role_id = owner_data.get('approver_role_ids', {}).get(guild_id_str)
 
         role = None
         if approver_role_id:
             role = interaction.guild.get_role(int(approver_role_id))
+        else:
+            print(f"⚠️ Роль модераторов не настроена для сервера {guild_id_str}")
 
         mention = role.mention if role else "@everyone"
+        print(f"📢 Упоминание: {mention}")
 
         form_data = self._get_form_data()
         embed = EmbedBuilder.create_application_embed(interaction.user, form_data)
@@ -620,6 +637,17 @@ class ApplyButtonView(BaseView):
 
     @discord.ui.button(label="Подать заявку", style=discord.ButtonStyle.blurple, custom_id="apply_button")
     async def apply_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Проверяем, есть ли пользователь в черном списке
+        from src.database_firebase import has_pending_application, is_blacklisted
+        if is_blacklisted(interaction.guild_id, interaction.user.id):
+            await self.handle_error(interaction, "Вы находитесь в черном списке и не можете подавать заявки.")
+            return
+        
+        # Проверяем, есть ли у пользователя активная заявка
+        if has_pending_application(interaction.guild_id, interaction.user.id):
+            await self.handle_error(interaction, "У вас уже есть активная заявка! Дождитесь её рассмотрения, прежде чем подавать новую.")
+            return
+        
         settings = get_settings(interaction.guild_id)
         
         if len(settings) >= 2:
@@ -636,9 +664,10 @@ class ApplyButtonView(BaseView):
 
 
 class CaptView(View):
-    def __init__(self, max_members):
+    def __init__(self, max_members, timer_minutes=None):
         super().__init__(timeout=None)
         self.max_members = max_members
+        self.timer_minutes = timer_minutes
         self.member_manager = CaptMemberManager()
         self._setup_buttons()
     
