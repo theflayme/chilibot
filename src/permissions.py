@@ -55,24 +55,19 @@ class PermissionChecker:
         return self._user_has_role(interaction.user, role)
     
     async def check_command_permission(self, interaction: discord.Interaction, command_name: str) -> bool:
-        """Проверяет, имеет ли пользователь разрешение на выполнение команды на основе ролей"""
         if not self._validate_guild(interaction):
             return False
         
-        # Владельцы всегда имеют доступ ко всем командам
         if self._is_owner(interaction.user.id):
             return True
         
-        # Получаем роли пользователя
         user_roles = [role.id for role in interaction.user.roles]
         
-        # Проверяем каждую роль пользователя на наличие разрешения для команды
         for role_id in user_roles:
             permissions = get_role_permissions(interaction.guild_id, role_id)
             if command_name in permissions:
                 return True
         
-        # Дополнительная проверка через старую систему approver для обратной совместимости
         return await self.check_approver(interaction)
     
     def requires_approver(self):
@@ -81,7 +76,6 @@ class PermissionChecker:
         return app_commands.check(predicate)
     
     def requires_command_permission(self, command_name: str):
-        """Декоратор для проверки разрешений команды на основе ролей"""
         async def predicate(interaction: discord.Interaction) -> bool:
             return await self.check_command_permission(interaction, command_name)
         return app_commands.check(predicate)
@@ -104,7 +98,35 @@ class PermissionService:
         return self._permission_checker.requires_command_permission(command_name)
 
 
+class UniversalPermissionChecker:
+    def __init__(self, permission_service: PermissionService):
+        self._permission_service = permission_service
+        self._always_allowed_commands = ['help']
+        self._owner_only_commands = ['sync', 'manageroles']
+    
+    def _is_always_allowed(self, command_name: str) -> bool:
+        return command_name in self._always_allowed_commands
+    
+    def _is_owner_only(self, command_name: str) -> bool:
+        return command_name in self._owner_only_commands
+    
+    async def _check_permission_predicate(self, interaction: discord.Interaction) -> bool:
+        command_name = interaction.command.name if interaction.command else "unknown"
+        
+        if self._is_always_allowed(command_name):
+            return True
+            
+        if self._is_owner_only(command_name):
+            return is_owner(interaction.user.id)
+        
+        return await self._permission_service.check_command_permission(interaction, command_name)
+    
+    def get_check_decorator(self):
+        return app_commands.check(self._check_permission_predicate)
+
+
 _permission_service = PermissionService()
+_universal_checker = UniversalPermissionChecker(_permission_service)
 
 
 async def check_approver(interaction: discord.Interaction) -> bool:
@@ -112,7 +134,6 @@ async def check_approver(interaction: discord.Interaction) -> bool:
 
 
 async def check_command_permission(interaction: discord.Interaction, command_name: str) -> bool:
-    """Проверяет, имеет ли пользователь разрешение на выполнение команды"""
     return await _permission_service.check_command_permission(interaction, command_name)
 
 
@@ -121,25 +142,8 @@ def requires_approver():
 
 
 def requires_command_permission(command_name: str):
-    """Декоратор для проверки разрешений команды на основе ролей"""
     return _permission_service.requires_command_permission(command_name)
 
 
 def universal_permission_check():
-    """Универсальный декоратор для проверки разрешений всех команд"""
-    async def predicate(interaction: discord.Interaction) -> bool:
-        # Получаем имя команды
-        command_name = interaction.command.name if interaction.command else "unknown"
-        
-        # Специальные команды, которые всегда доступны
-        if command_name in ['help']:
-            return True
-            
-        # Команды только для владельцев
-        if command_name in ['sync', 'manageroles']:
-            return is_owner(interaction.user.id)
-        
-        # Проверяем остальные команды через систему ролей
-        return await check_command_permission(interaction, command_name)
-    
-    return app_commands.check(predicate)
+    return _universal_checker.get_check_decorator()

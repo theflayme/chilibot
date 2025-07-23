@@ -1,7 +1,3 @@
-"""
-Модуль системы модерации
-"""
-
 from .blacklist_commands import BlacklistCommand, UnblacklistCommand, BlacklistChannelCommand
 
 __all__ = [

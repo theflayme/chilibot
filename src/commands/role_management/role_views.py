@@ -1,57 +1,28 @@
-"""
-Views для интерфейса управления ролями
-"""
-
 import discord
 from typing import List
 from src.database_firebase import get_role_permissions
-from .config import AVAILABLE_COMMANDS, COMMAND_EMOJIS, INTERFACE_CONFIG
+from .config import RoleManagementConfig
 from .role_buttons import CommandToggleButton, SavePermissionsButton, ResetPermissionsButton
 
 
 class RolePermissionView(discord.ui.View):
-    """View для выбора роли"""
     
     def __init__(self, guild: discord.Guild):
-        super().__init__(timeout=INTERFACE_CONFIG['TIMEOUT'])
+        super().__init__(timeout=RoleManagementConfig.TIMEOUT)
         self.guild = guild
         self.add_item(RoleSelect(guild))
     
     async def on_timeout(self):
-        """Обработка таймаута"""
         for item in self.children:
             item.disabled = True
 
 
 class RoleSelect(discord.ui.Select):
-    """Селект для выбора роли"""
     
     def __init__(self, guild: discord.Guild):
         self.guild = guild
         
-        # Создаем опции для ролей (исключаем @everyone и боты)
-        options = []
-        roles = sorted(
-            [role for role in guild.roles if role.name != "@everyone" and not role.managed], 
-            key=lambda r: r.position, 
-            reverse=True
-        )
-        
-        # Ограничиваем до максимального количества ролей (лимит Discord)
-        for role in roles[:INTERFACE_CONFIG['MAX_ROLES_PER_SELECT']]:
-            options.append(discord.SelectOption(
-                label=role.name[:100],  # Ограничение Discord на длину label
-                value=str(role.id),
-                description=f"Участников: {len(role.members)}",
-                emoji="🎭"
-            ))
-        
-        if not options:
-            options.append(discord.SelectOption(
-                label="Нет доступных ролей",
-                value="none",
-                description="На сервере нет ролей для настройки"
-            ))
+        options = self._create_role_options()
         
         super().__init__(
             placeholder="Выберите роль для настройки разрешений...",
@@ -60,8 +31,41 @@ class RoleSelect(discord.ui.Select):
             max_values=1
         )
     
+    def _create_role_options(self) -> List[discord.SelectOption]:
+        options = []
+        roles = self._get_filtered_roles()
+        
+        for role in roles[:RoleManagementConfig.MAX_ROLES_PER_SELECT]:
+            options.append(self._create_role_option(role))
+        
+        if not options:
+            options.append(self._create_no_roles_option())
+        
+        return options
+    
+    def _get_filtered_roles(self) -> List[discord.Role]:
+        return sorted(
+            [role for role in self.guild.roles if role.name != "@everyone" and not role.managed], 
+            key=lambda r: r.position, 
+            reverse=True
+        )
+    
+    def _create_role_option(self, role: discord.Role) -> discord.SelectOption:
+        return discord.SelectOption(
+            label=role.name[:100],
+            value=str(role.id),
+            description=f"Участников: {len(role.members)}",
+            emoji="🎭"
+        )
+    
+    def _create_no_roles_option(self) -> discord.SelectOption:
+        return discord.SelectOption(
+            label="Нет доступных ролей",
+            value="none",
+            description="На сервере нет ролей для настройки"
+        )
+    
     async def callback(self, interaction: discord.Interaction):
-        """Обработка выбора роли"""
         if self.values[0] == "none":
             await interaction.response.send_message("❌ Нет доступных ролей для настройки.", ephemeral=True)
             return
@@ -73,7 +77,6 @@ class RoleSelect(discord.ui.Select):
             await interaction.response.send_message("❌ Роль не найдена.", ephemeral=True)
             return
         
-        # Создаем интерфейс настройки разрешений для выбранной роли
         view = CommandPermissionView(self.guild, role)
         embed = view.create_permissions_embed()
         
@@ -81,25 +84,19 @@ class RoleSelect(discord.ui.Select):
 
 
 class CommandPermissionView(discord.ui.View):
-    """View для настройки разрешений команд"""
     
     def __init__(self, guild: discord.Guild, role: discord.Role):
-        super().__init__(timeout=INTERFACE_CONFIG['TIMEOUT'])
+        super().__init__(timeout=RoleManagementConfig.TIMEOUT)
         self.guild = guild
         self.role = role
-        
-        # Получаем текущие разрешения
         self.current_permissions = get_role_permissions(guild.id, role.id)
+        self._config = RoleManagementConfig()
         
-        # Добавляем кнопки для каждой команды
         self._add_command_buttons()
-        
-        # Добавляем кнопки управления
         self._add_management_buttons()
     
     def _add_command_buttons(self):
-        """Добавить кнопки для команд"""
-        commands = list(AVAILABLE_COMMANDS.items())
+        commands = list(self._config.get_all_commands().items())
         
         for i, (command, description) in enumerate(commands):
             button = CommandToggleButton(
@@ -107,58 +104,69 @@ class CommandPermissionView(discord.ui.View):
                 description=description, 
                 enabled=command in self.current_permissions
             )
-            button.row = i // INTERFACE_CONFIG['BUTTONS_PER_ROW']  # Распределяем по рядам
+            button.row = i // RoleManagementConfig.BUTTONS_PER_ROW
             self.add_item(button)
     
     def _add_management_buttons(self):
-        """Добавить кнопки управления"""
         save_button = SavePermissionsButton()
-        save_button.row = INTERFACE_CONFIG['MANAGEMENT_ROW']
+        save_button.row = RoleManagementConfig.MANAGEMENT_ROW
         self.add_item(save_button)
         
         reset_button = ResetPermissionsButton()
-        reset_button.row = INTERFACE_CONFIG['MANAGEMENT_ROW']
+        reset_button.row = RoleManagementConfig.MANAGEMENT_ROW
         self.add_item(reset_button)
     
     def create_permissions_embed(self) -> discord.Embed:
-        """Создать embed с информацией о разрешениях"""
         embed = discord.Embed(
             title=f"🔧 Настройка разрешений для роли {self.role.name}",
-            description=(
-                f"Роль: {self.role.mention}\n"
-                f"Участников с ролью: {len(self.role.members)}\n\n"
-                "**Текущие разрешения:**\n"
-            ),
-            color=self.role.color if self.role.color != discord.Color.default() else 0x3498db
+            description=self._create_embed_description(),
+            color=self._get_embed_color()
         )
         
-        # Добавляем информацию о текущих разрешениях
-        if self.current_permissions:
-            permissions_text = ""
-            for perm in self.current_permissions:
-                if perm in AVAILABLE_COMMANDS:
-                    emoji = COMMAND_EMOJIS.get(perm, '📋')
-                    permissions_text += f"✅ {emoji} {AVAILABLE_COMMANDS[perm]}\n"
-            embed.description += permissions_text if permissions_text else "❌ Нет разрешений"
-        else:
-            embed.description += "❌ Нет разрешений"
-        
-        # Добавляем инструкции
         embed.add_field(
             name="💡 Как использовать",
-            value=(
-                "• Нажимайте на кнопки команд для включения/выключения доступа\n"
-                "• 🟢 = разрешено, 🔴 = запрещено\n"
-                "• Нажмите **Сохранить**, чтобы применить изменения\n"
-                "• **Сброс** удалит все разрешения для роли"
-            ),
+            value=self._get_usage_instructions(),
             inline=False
         )
         
         embed.set_footer(text=f"ID роли: {self.role.id}")
         return embed
     
+    def _create_embed_description(self) -> str:
+        base_description = (
+            f"Роль: {self.role.mention}\n"
+            f"Участников с ролью: {len(self.role.members)}\n\n"
+            "**Текущие разрешения:**\n"
+        )
+        
+        permissions_text = self._get_permissions_text()
+        return base_description + permissions_text
+    
+    def _get_permissions_text(self) -> str:
+        if not self.current_permissions:
+            return "❌ Нет разрешений"
+        
+        permissions_text = ""
+        available_commands = self._config.get_all_commands()
+        
+        for perm in self.current_permissions:
+            if perm in available_commands:
+                emoji = self._config.get_command_emoji(perm)
+                permissions_text += f"✅ {emoji} {available_commands[perm]}\n"
+        
+        return permissions_text if permissions_text else "❌ Нет разрешений"
+    
+    def _get_embed_color(self) -> int:
+        return self.role.color.value if self.role.color != discord.Color.default() else 0x3498db
+    
+    def _get_usage_instructions(self) -> str:
+        return (
+            "• Нажимайте на кнопки команд для включения/выключения доступа\n"
+            "• 🟢 = разрешено, 🔴 = запрещено\n"
+            "• Нажмите **Сохранить**, чтобы применить изменения\n"
+            "• **Сброс** удалит все разрешения для роли"
+        )
+    
     async def on_timeout(self):
-        """Обработка таймаута"""
         for item in self.children:
-            item.disabled = True 
+            item.disabled = True

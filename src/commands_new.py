@@ -1,52 +1,52 @@
-"""
-Новая система команд с использованием модульной архитектуры
-Этот файл заменит старый commands.py
-"""
-
 import discord
 from src.core import CommandRegistry
 
 
-async def setup_commands(bot: discord.Client) -> CommandRegistry:
-    """
-    Настройка системы команд с использованием новой архитектуры
+class CommandSetup:
+    def __init__(self, bot: discord.Client):
+        self.bot = bot
+        self.registry = None
     
-    Args:
-        bot: Экземпляр Discord бота
-        
-    Returns:
-        CommandRegistry: Настроенный реестр команд
-    """
+    async def setup_commands(self) -> CommandRegistry:
+        self.registry = CommandRegistry(self.bot)
+        await self.registry.setup_slash_commands()
+        return self.registry
+
+
+class LegacyCommandSetup:
+    def __init__(self, command_setup: CommandSetup):
+        self.command_setup = command_setup
     
-    # Создаем реестр команд
-    registry = CommandRegistry(bot)
+    async def setup_commands_legacy(self) -> CommandRegistry:
+        return await self.command_setup.setup_commands()
+
+
+class AvailableCommandsProvider:
+    @staticmethod
+    def get_available_commands():
+        from src.commands.role_management.config import RoleManagementConfig
+        return RoleManagementConfig.get_all_commands()
+
+
+class CommandsModule:
+    def __init__(self, bot: discord.Client):
+        self.command_setup = CommandSetup(bot)
+        self.legacy_setup = LegacyCommandSetup(self.command_setup)
+        self.commands_provider = AvailableCommandsProvider()
     
-    # Настраиваем slash команды
-    await registry.setup_slash_commands()
+    async def setup_commands(self) -> CommandRegistry:
+        return await self.command_setup.setup_commands()
     
-    return registry
+    async def setup_commands_legacy(self) -> CommandRegistry:
+        return await self.legacy_setup.setup_commands_legacy()
+    
+    def get_available_commands(self):
+        return self.commands_provider.get_available_commands()
 
 
-# Для обратной совместимости с main.py
-async def setup_commands_legacy(bot: discord.Client):
-    """
-    Обертка для обратной совместимости
-    """
-    return await setup_commands(bot)
-
-
-def get_available_commands():
-    """
-    Получить список доступных команд для настройки разрешений
-    Используется в модуле управления ролями
-    """
-    from src.commands.role_management.config import AVAILABLE_COMMANDS
-    return AVAILABLE_COMMANDS
-
-
-# Экспортируем для обратной совместимости
 __all__ = [
-    'setup_commands',
-    'setup_commands_legacy', 
-    'get_available_commands'
-] 
+    'CommandsModule',
+    'CommandSetup',
+    'LegacyCommandSetup',
+    'AvailableCommandsProvider'
+]

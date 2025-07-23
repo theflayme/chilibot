@@ -71,16 +71,59 @@ class NotificationSender:
 
 class RoleManager:
     @staticmethod
-    async def assign_approved_role(guild, applicant_id: str) -> bool:
+    async def assign_approved_role(guild, applicant_id: str, bot_user_id: int = None) -> bool:
         try:
-            _, _, _, approved_role_id = get_settings(guild.id)
-            if approved_role_id:
-                role = guild.get_role(int(approved_role_id))
-                if role:
-                    member = guild.get_member(int(applicant_id))
-                    if member:
-                        await member.add_roles(role)
-                        return True
+            # get_settings возвращает: (form_channel_id, approv_channel_id, approver_role_id, approved_role_id, blacklist_report_channel_id)
+            settings = get_settings(guild.id)
+            if len(settings) >= 4:
+                approved_role_id = settings[3]  # 4-й элемент (индекс 3)
+                
+                if approved_role_id:
+                    role = guild.get_role(int(approved_role_id))
+                    if role:
+                        # Используем fetch_member как основной метод для надёжного поиска
+                        member = None
+                        applicant_id_int = int(applicant_id)
+                        
+                        try:
+                            member = await guild.fetch_member(applicant_id_int)
+                        except discord.NotFound:
+                            return True  # Пользователь покинул сервер
+                        except Exception:
+                            # Fallback на get_member в случае ошибки API
+                            member = guild.get_member(applicant_id_int)
+                            if not member:
+                                return False
+                        
+                        if member:
+                            # Проверяем права бота (используем guild.me для получения бота)
+                            bot_member = guild.me
+                            if not bot_member:
+                                print(f"❌ Бот не найден на сервере {guild.id}")
+                                return False
+                                
+                            if not bot_member.guild_permissions.manage_roles:
+                                return False
+                            
+                            # Проверяем иерархию ролей
+                            if role.position >= bot_member.top_role.position:
+                                return False
+                            
+                            # Проверяем, есть ли уже эта роль у пользователя
+                            if role in member.roles:
+                                return True
+                            
+                            await member.add_roles(role, reason="Заявка одобрена")
+                            return True
+                        else:
+                            # Пользователь покинул сервер - возвращаем True, чтобы заявка была помечена как обработанная
+                            return True
+                    else:
+                        return False
+                else:
+                    return False
+            else:
+                return False
             return False
         except Exception:
             return False
@@ -113,8 +156,14 @@ class EmbedBuilder:
 
         embed = discord.Embed(title=title, description=description_with_ansi, color=color)
 
-        if image_url:
-            embed.set_image(url=image_url)
+        # Валидация URL изображения
+        if image_url and image_url.strip():
+            url = image_url.strip()
+            if url.startswith(('http://', 'https://')):
+                try:
+                    embed.set_image(url=url)
+                except Exception:
+                    pass
         
         return embed
 
@@ -442,14 +491,13 @@ class ApplicationView(BaseView):
             await interaction.followup.send("Ошибка: сервер не определён.", ephemeral=True)
             return
 
+        # Отправляем уведомление пользователю
         notification_sent = await self.notification_sender.send_approval_notification(self.applicant_id)
-        if not notification_sent:
-            await interaction.followup.send("Не удалось отправить сообщение пользователю.", ephemeral=True)
-
+        
+        # Выдаем роль
         role_assigned = await RoleManager.assign_approved_role(interaction.guild, self.applicant_id)
-        if not role_assigned:
-            await interaction.followup.send("Не удалось выдать роль пользователю.", ephemeral=True)
-
+        
+        # Обновляем сообщение с заявкой
         embed = interaction.message.embeds[0]
         embed.add_field(name="Рассмотрел заявку", value=interaction.user.mention, inline=False)
 
@@ -458,6 +506,34 @@ class ApplicationView(BaseView):
         new_view.add_item(approved_button)
 
         await interaction.message.edit(embed=embed, view=new_view)
+        
+        # Проверяем, есть ли пользователь на сервере (используем fetch_member для надёжности)
+        applicant_id_int = int(self.applicant_id)
+        member = None
+        
+        try:
+            # Сначала пробуем fetch_member как основной метод
+            member = await interaction.guild.fetch_member(applicant_id_int)
+        except discord.NotFound:
+            member = None
+        except Exception:
+            # В случае ошибки fetch_member, попробуем get_member как fallback
+            member = interaction.guild.get_member(applicant_id_int)
+        
+        # Отправляем результат операций
+        messages = []
+        if not member:
+            messages.append("ℹ️ Пользователь покинул сервер - заявка помечена как обработанная")
+        else:
+            if not notification_sent:
+                messages.append("⚠️ Не удалось отправить уведомление пользователю")
+            if not role_assigned:
+                messages.append("⚠️ Не удалось выдать роль пользователю")
+        
+        if messages:
+            await interaction.followup.send("\n".join(messages), ephemeral=True)
+        else:
+            await interaction.followup.send("✅ Заявка одобрена успешно!", ephemeral=True)
 
         self.reviewer.clear_reviewer(str(self.message_id))
         
@@ -589,22 +665,18 @@ class ApplicationModal(BaseModal, title="Заявка на вступление"
             await self.handle_error(interaction, "Ошибка: канал для заявок не найден.")
             return
 
-        # Обновляем данные владельцев для получения актуальных ролей
-        init_owners()
+        # Получаем роль модераторов из настроек
         guild_id_str = str(interaction.guild_id)
-        
-        # Получаем актуальные данные кэша
-        owner_data = owners_cache()
-        approver_role_id = owner_data.get('approver_role_ids', {}).get(guild_id_str)
+        settings = get_settings(interaction.guild_id)
+        approver_role_id = settings[2] if len(settings) >= 3 else None
 
         role = None
         if approver_role_id:
             role = interaction.guild.get_role(int(approver_role_id))
         else:
-            print(f"⚠️ Роль модераторов не настроена для сервера {guild_id_str}")
+            pass
 
         mention = role.mention if role else "@everyone"
-        print(f"📢 Упоминание: {mention}")
 
         form_data = self._get_form_data()
         embed = EmbedBuilder.create_application_embed(interaction.user, form_data)

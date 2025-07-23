@@ -1,7 +1,3 @@
-"""
-Команды системы модерации и черного списка
-"""
-
 import discord
 from typing import Tuple, Optional
 from src.core.base_command import PermissionCommand
@@ -15,7 +11,6 @@ from src.database_firebase import (
 
 
 class BlacklistChannelCommand(PermissionCommand):
-    """Команда для настройки канала отчетов о блокировках"""
     
     def __init__(self, bot: discord.Client):
         super().__init__(
@@ -26,7 +21,6 @@ class BlacklistChannelCommand(PermissionCommand):
         )
     
     async def execute(self, interaction: discord.Interaction, channel: discord.TextChannel, **kwargs) -> None:
-        """Выполнить команду настройки канала отчетов"""
         if not await self.validate(interaction):
             return
         
@@ -38,7 +32,6 @@ class BlacklistChannelCommand(PermissionCommand):
 
 
 class BlacklistCommand(PermissionCommand):
-    """Команда для добавления пользователя в черный список"""
     
     def __init__(self, bot: discord.Client):
         super().__init__(
@@ -49,32 +42,25 @@ class BlacklistCommand(PermissionCommand):
         )
     
     async def execute(self, interaction: discord.Interaction, user_id: str, static_id_majestic: str, reason: str, **kwargs) -> None:
-        """Выполнить команду добавления в черный список"""
         if not await self.validate(interaction):
             return
 
-        # Проверяем канал отчетов
         report_channel = await self._get_report_channel(interaction)
         if not report_channel:
             return
 
-        # Находим пользователя
         user, member = await self._find_user_and_member(interaction, user_id)
         if not user or not member:
             return
 
-        # Добавляем в черный список
         add_to_blacklist(interaction.guild_id, user.id, reason, interaction.user.id, static_id_majestic)
         
-        # Отправляем отчет
         embed = self._create_blacklist_embed(user, static_id_majestic, reason, interaction.user)
         await report_channel.send(embed=embed)
         
-        # Баним пользователя
         await self._ban_user(interaction, member, user, reason)
     
     async def _get_report_channel(self, interaction: discord.Interaction) -> Optional[discord.TextChannel]:
-        """Получить канал для отчетов"""
         report_channel_id = get_blacklist_report_channel(interaction.guild_id)
         if not report_channel_id:
             await self.handle_error(
@@ -94,7 +80,6 @@ class BlacklistCommand(PermissionCommand):
         return report_channel
     
     async def _find_user_and_member(self, interaction: discord.Interaction, user_id: str) -> Tuple[Optional[discord.User], Optional[discord.Member]]:
-        """Найти пользователя и участника сервера"""
         try:
             user = await self._bot.fetch_user(int(user_id))
             if not user:
@@ -116,7 +101,6 @@ class BlacklistCommand(PermissionCommand):
             return None, None
     
     def _create_blacklist_embed(self, user: discord.User, static_id_majestic: str, reason: str, moderator: discord.User) -> discord.Embed:
-        """Создать embed отчета о блокировке"""
         embed = discord.Embed(
             title="⛔ Черный список семьи",
             description="Пользователь добавлен в черный список семей",
@@ -150,7 +134,6 @@ class BlacklistCommand(PermissionCommand):
         return embed
     
     async def _ban_user(self, interaction: discord.Interaction, member: discord.Member, user: discord.User, reason: str):
-        """Забанить пользователя"""
         try:
             bot_member = interaction.guild.get_member(self._bot.user.id)
             if not bot_member.guild_permissions.ban_members:
@@ -185,7 +168,6 @@ class BlacklistCommand(PermissionCommand):
 
 
 class UnblacklistCommand(PermissionCommand):
-    """Команда для удаления пользователя из черного списка"""
     
     def __init__(self, bot: discord.Client):
         super().__init__(
@@ -196,42 +178,34 @@ class UnblacklistCommand(PermissionCommand):
         )
     
     async def execute(self, interaction: discord.Interaction, user_id: str, **kwargs) -> None:
-        """Выполнить команду удаления из черного списка"""
         if not await self.validate(interaction):
             return
         
-        # Валидация ID пользователя
         try:
             user_id_int = int(user_id)
         except ValueError:
             await self.handle_error(interaction, "❌ Неверный формат ID пользователя. Используйте числовой ID.")
             return
         
-        # Проверяем, что пользователь в черном списке
         if not is_blacklisted(interaction.guild_id, user_id_int):
             await self.handle_error(interaction, f"❌ Пользователь с ID {user_id} не находится в черном списке.")
             return
         
-        # Удаляем из черного списка
         success = remove_from_blacklist(interaction.guild_id, user_id_int)
         if not success:
             await self.handle_error(interaction, "❌ Произошла ошибка при удалении пользователя из черного списка.")
             return
         
-        # Получаем информацию о пользователе
         user_display = await self._get_user_display(user_id_int)
         
-        # Отправляем отчет
         await self._send_removal_report(interaction, user_id, user_display)
         
-        # Подтверждаем действие
         await interaction.response.send_message(
             f"✅ Пользователь {user_display} удален из черного списка.", 
             ephemeral=True
         )
     
     async def _get_user_display(self, user_id: int) -> str:
-        """Получить отображаемую информацию о пользователе"""
         try:
             user = await self._bot.fetch_user(user_id)
             return f"{user.mention} ({user.name}#{user.discriminator})"
@@ -239,15 +213,14 @@ class UnblacklistCommand(PermissionCommand):
             return f"ID: {user_id}"
     
     async def _send_removal_report(self, interaction: discord.Interaction, user_id: str, user_display: str):
-        """Отправить отчет об удалении из черного списка"""
         try:
             report_channel_id = get_blacklist_report_channel(interaction.guild_id)
             if not report_channel_id:
-                return  # Канал не настроен
+                return
             
             report_channel = interaction.guild.get_channel(int(report_channel_id))
             if not report_channel:
-                return  # Канал не найден
+                return
             
             embed = discord.Embed(
                 title="✅ Удаление из черного списка",
@@ -272,5 +245,4 @@ class UnblacklistCommand(PermissionCommand):
             await report_channel.send(embed=embed)
             
         except Exception:
-            # Не критично, если не удалось отправить отчет
-            pass 
+            pass

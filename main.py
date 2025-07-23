@@ -15,7 +15,7 @@ from src.database_firebase import (
     owners_cache
 )
 from src.views import ApplyButtonView, ApplicationView
-from src.commands_new import setup_commands
+from src.commands_new import CommandsModule
 from src.utils import clear_old_states
 
 class BotManager:
@@ -147,7 +147,8 @@ class BotManager:
         return f"{mention} <@{app_data['applicant_id']}>"
 
     async def _setup_commands(self):
-        await setup_commands(self.bot)
+        commands_module = CommandsModule(self.bot)
+        await commands_module.setup_commands()
 
     async def _sync_commands(self):
         synced = await self.bot.tree.sync()

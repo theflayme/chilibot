@@ -1,7 +1,3 @@
-"""
-Команды для системы заявок
-"""
-
 import discord
 from src.core.base_command import PermissionCommand
 from src.database_firebase import save_settings
@@ -9,7 +5,6 @@ from src.views import FormMessageModal
 
 
 class AddFormCommand(PermissionCommand):
-    """Команда для создания формы заявок"""
     
     def __init__(self, bot: discord.Client):
         super().__init__(
@@ -20,7 +15,6 @@ class AddFormCommand(PermissionCommand):
         )
     
     async def execute(self, interaction: discord.Interaction, channel: discord.TextChannel, **kwargs) -> None:
-        """Выполнить команду создания формы"""
         if not await self.validate(interaction):
             return
         
@@ -29,7 +23,6 @@ class AddFormCommand(PermissionCommand):
 
 
 class ApprovalChannelCommand(PermissionCommand):
-    """Команда для настройки канала одобрений"""
     
     def __init__(self, bot: discord.Client):
         super().__init__(
@@ -40,7 +33,6 @@ class ApprovalChannelCommand(PermissionCommand):
         )
     
     async def execute(self, interaction: discord.Interaction, channel: discord.TextChannel = None, **kwargs) -> None:
-        """Выполнить команду настройки канала одобрений"""
         if not await self.validate(interaction):
             return
         
@@ -53,7 +45,6 @@ class ApprovalChannelCommand(PermissionCommand):
 
 
 class GiveApprovalCommand(PermissionCommand):
-    """Команда для настройки ролей одобрения"""
     
     def __init__(self, bot: discord.Client):
         super().__init__(
@@ -64,7 +55,6 @@ class GiveApprovalCommand(PermissionCommand):
         )
     
     async def execute(self, interaction: discord.Interaction, approver: discord.Role, approved: discord.Role, **kwargs) -> None:
-        """Выполнить команду настройки ролей одобрения"""
         if not await self.validate(interaction):
             return
         
@@ -78,7 +68,6 @@ class GiveApprovalCommand(PermissionCommand):
         await interaction.response.send_message(embed=embed, ephemeral=True)
     
     def _create_roles_embed(self, approver: discord.Role, approved: discord.Role) -> discord.Embed:
-        """Создать embed с информацией о ролях"""
         embed = discord.Embed(
             title="✅ Роли настроены",
             description="Система ролей для заявок успешно настроена:",
@@ -94,4 +83,4 @@ class GiveApprovalCommand(PermissionCommand):
             value=f"{approved.mention}\n*Выдается при одобрении заявки*", 
             inline=False
         )
-        return embed 
+        return embed

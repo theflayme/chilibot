@@ -1,13 +1,8 @@
-"""
-Команда синхронизации
-"""
-
 import discord
 from src.core.base_command import OwnerCommand
 
 
 class SyncCommand(OwnerCommand):
-    """Команда синхронизации slash команд с Discord"""
     
     def __init__(self, bot: discord.Client):
         super().__init__(
@@ -17,7 +12,6 @@ class SyncCommand(OwnerCommand):
         )
     
     async def execute(self, interaction: discord.Interaction, **kwargs) -> None:
-        """Выполнить команду синхронизации"""
         if not await self.validate(interaction):
             return
             
@@ -28,7 +22,6 @@ class SyncCommand(OwnerCommand):
         await interaction.followup.send(embed=embed, ephemeral=True)
     
     def _create_sync_embed(self, synced: list) -> discord.Embed:
-        """Создать embed результата синхронизации"""
         embed = discord.Embed(
             title="✅ Синхронизация завершена",
             description=f"Успешно синхронизировано **{len(synced)}** команд:",
@@ -43,4 +36,4 @@ class SyncCommand(OwnerCommand):
         )
         
         embed.set_footer(text="Команды обновлены в интерфейсе Discord")
-        return embed 
+        return embed
