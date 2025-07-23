@@ -71,6 +71,10 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.json
+
+# Firebase
+chiliili-firebase.json
 
 # Бэкапы
 *.bak
