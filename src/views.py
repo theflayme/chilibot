@@ -1,3 +1,5 @@
+# $1
+
 import time
 import discord
 from discord.ui import View, Button, Modal, TextInput
