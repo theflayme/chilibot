@@ -69,7 +69,6 @@ class BotManager:
 
     async def _restore_application_views(self):
         try:
-            from src.database_firebase import remove_application
             app_cache = applications_cache()
             
             if not app_cache:
@@ -80,18 +79,26 @@ class BotManager:
                 if not guild:
                     continue
                 
-                applications_to_remove = []
-                
                 for message_id, app_data in applications.items():
                     channel = guild.get_channel(int(app_data['channel_id']))
                     if not channel:
-                        applications_to_remove.append(message_id)
+                        print(f"⚠️ Канал не найден для заявки {message_id}, пропускаем")
                         continue
                     
                     try:
                         message = await channel.fetch_message(int(message_id))
                         
-                        if message.components and any(isinstance(c, discord.ui.Button) for row in message.components for c in row.children):
+                        # Проверяем, обработана ли заявка (есть ли поле "Рассмотрел заявку" в embed)
+                        is_processed = False
+                        if message.embeds:
+                            embed = message.embeds[0]
+                            for field in embed.fields:
+                                if "Рассмотрел заявку" in field.name:
+                                    is_processed = True
+                                    break
+                        
+                        # Восстанавливаем view только для необработанных заявок
+                        if not is_processed:
                             view = ApplicationView(
                                 applicant_id=app_data['applicant_id'], 
                                 message_id=message_id, 
@@ -99,25 +106,20 @@ class BotManager:
                                 bot=self.bot
                             )
                             self.bot.add_view(view)
+                            print(f"✅ Восстановлено view для заявки {message_id}")
                         else:
-                            applications_to_remove.append(message_id)
+                            print(f"⚠️ Заявка {message_id} уже обработана модератором")
                         
                     except discord.NotFound:
-                        applications_to_remove.append(message_id)
+                        print(f"⚠️ Сообщение заявки {message_id} не найдено в чате")
                         
                     except discord.Forbidden:
-                        pass
+                        print(f"⚠️ Нет доступа к каналу для заявки {message_id}")
                         
                     except Exception as e:
                         print(f"❌ Ошибка при проверке сообщения {message_id}: {e}")
                         
                     await asyncio.sleep(0.1)
-                
-                for message_id in applications_to_remove:
-                    try:
-                        remove_application(guild_id, message_id)
-                    except Exception as e:
-                        print(f"❌ Ошибка удаления заявки {message_id}: {e}")
                         
         except Exception as e:
             print(f"❌ Критическая ошибка восстановления заявок: {e}")

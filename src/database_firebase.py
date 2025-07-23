@@ -1,3 +1,4 @@
+import discord
 import firebase_admin
 from firebase_admin import credentials, firestore
 import json
@@ -151,6 +152,7 @@ class FirebaseManager:
 
     def save_application(self, guild_id, channel_id, message_id, applicant_id, embed_data):
         if not self._ensure_initialized():
+            print(f"❌ Firebase не инициализирован для save_application")
             return
         
         try:
@@ -164,19 +166,24 @@ class FirebaseManager:
                 'created_at': firestore.SERVER_TIMESTAMP
             })
             
+            print(f"✅ Заявка сохранена: guild_id={guild_id}, applicant_id={applicant_id}, message_id={message_id}")
+            
         except Exception as e:
-            pass
+            print(f"❌ Ошибка сохранения заявки: {e}")
 
     def remove_application(self, guild_id, message_id):
         if not self._ensure_initialized():
+            print(f"❌ Firebase не инициализирован для remove_application")
             return
         
         try:
             doc_ref = self._db.collection('applications').document(f"{guild_id}_{message_id}")
             doc_ref.delete()
             
+            print(f"✅ Заявка удалена: guild_id={guild_id}, message_id={message_id}")
+            
         except Exception as e:
-            pass
+            print(f"❌ Ошибка удаления заявки: {e}")
 
     def get_guild_applications(self, guild_id):
         if not self._ensure_initialized():
@@ -184,7 +191,7 @@ class FirebaseManager:
         
         try:
             applications_ref = self._db.collection('applications')
-            query = applications_ref.where(filter=('guild_id', '==', str(guild_id)))
+            query = applications_ref.where('guild_id', '==', str(guild_id))
             docs = query.stream()
             
             applications = {}
@@ -199,6 +206,7 @@ class FirebaseManager:
             return applications
             
         except Exception as e:
+            print(f"❌ Ошибка в get_guild_applications: {e}")
             return {}
 
     def save_capt(self, guild_id, channel_id, message_id, max_members, current_members=None, timer_minutes=None):
@@ -389,16 +397,89 @@ class FirebaseManager:
     def has_pending_application(self, guild_id, applicant_id):
         """Проверяет, есть ли у пользователя активная заявка на сервере"""
         if not self._ensure_initialized():
+            print(f"❌ Firebase не инициализирован для has_pending_application")
             return False
         
         try:
             applications_ref = self._db.collection('applications')
-            query = applications_ref.where(filter=('guild_id', '==', str(guild_id))).where(filter=('applicant_id', '==', str(applicant_id)))
+            # Используем правильный синтаксис для запроса
+            query = applications_ref.where('guild_id', '==', str(guild_id)).where('applicant_id', '==', str(applicant_id))
             docs = list(query.stream())
+            
+            print(f"🔍 Проверка заявки: guild_id={guild_id}, applicant_id={applicant_id}, найдено документов: {len(docs)}")
             
             return len(docs) > 0
             
         except Exception as e:
+            print(f"❌ Ошибка в has_pending_application: {e}")
+            return False
+
+    def has_pending_application_alternative(self, guild_id, applicant_id):
+        """Альтернативная проверка заявок через get_guild_applications"""
+        try:
+            applications = self.get_guild_applications(guild_id)
+            for message_id, app_data in applications.items():
+                if app_data['applicant_id'] == str(applicant_id):
+                    print(f"✅ Найдена активная заявка: message_id={message_id}, applicant_id={applicant_id}")
+                    return True
+            
+            print(f"🔍 Активных заявок не найдено для applicant_id={applicant_id} на сервере {guild_id}")
+            return False
+            
+        except Exception as e:
+            print(f"❌ Ошибка в has_pending_application_alternative: {e}")
+            return False
+
+    async def has_pending_application_with_message_check(self, guild_id, applicant_id, bot):
+        """Проверка заявок с дополнительной проверкой существования сообщения в чате"""
+        try:
+            applications = self.get_guild_applications(guild_id)
+            
+            for message_id, app_data in applications.items():
+                if app_data['applicant_id'] == str(applicant_id):
+                    # Проверяем, существует ли сообщение в чате
+                    try:
+                        guild = bot.get_guild(int(guild_id))
+                        if guild:
+                            channel = guild.get_channel(int(app_data['channel_id']))
+                            if channel:
+                                message = await channel.fetch_message(int(message_id))
+                                # Проверяем, обработана ли заявка (есть ли поле "Рассмотрел заявку" в embed)
+                                is_processed = False
+                                if message.embeds:
+                                    embed = message.embeds[0]
+                                    for field in embed.fields:
+                                        if "Рассмотрел заявку" in field.name:
+                                            is_processed = True
+                                            break
+                                
+                                if not is_processed:
+                                    print(f"✅ Найдена активная заявка в чате: message_id={message_id}, applicant_id={applicant_id}")
+                                    return True
+                                else:
+                                    print(f"⚠️ Заявка найдена, но уже обработана модератором: message_id={message_id}")
+                            else:
+                                print(f"⚠️ Канал не найден для заявки: channel_id={app_data['channel_id']}")
+                        else:
+                            print(f"⚠️ Сервер не найден: guild_id={guild_id}")
+                    except discord.NotFound:
+                        print(f"⚠️ Сообщение заявки не найдено в чате: message_id={message_id}")
+                        # Сообщение удалено - заявка больше не активна
+                        continue
+                    except discord.Forbidden:
+                        print(f"⚠️ Нет доступа к каналу: channel_id={app_data['channel_id']}")
+                        # Не можем проверить - считаем заявку активной на всякий случай
+                        return True
+                    except Exception as e:
+                        print(f"❌ Ошибка проверки сообщения {message_id}: {e}")
+                        # В случае ошибки считаем заявку активной
+                        return True
+            
+            print(f"🔍 Активных заявок не найдено для applicant_id={applicant_id} на сервере {guild_id}")
+            return False
+            
+        except Exception as e:
+            print(f"❌ Ошибка в has_pending_application_with_message_check: {e}")
             return False
 
     def save_role_permissions(self, guild_id, role_id, permissions):
@@ -695,21 +776,30 @@ def get_blacklist_report_channel(guild_id):
     return firebase_db.get_blacklist_report_channel(guild_id)
 
 def has_pending_application(guild_id, applicant_id):
-    """Проверяет, есть ли у пользователя активная заявка на сервере"""
-    return firebase_db.has_pending_application(guild_id, applicant_id)
+    try:
+        result = firebase_db.has_pending_application(guild_id, applicant_id)
+        if result:
+            return True
+    except Exception as e:
+        print(f"❌ Основной метод проверки заявок не сработал: {e}")
+    
+    try:
+        return firebase_db.has_pending_application_alternative(guild_id, applicant_id)
+    except Exception as e:
+        print(f"❌ Альтернативный метод проверки заявок не сработал: {e}")
+        return False
+
+async def has_pending_application_with_bot(guild_id, applicant_id, bot):
+    return await firebase_db.has_pending_application_with_message_check(guild_id, applicant_id, bot)
 
 def save_role_permissions(guild_id, role_id, permissions):
-    """Сохраняет разрешения для роли"""
     return firebase_db.save_role_permissions(guild_id, role_id, permissions)
 
 def get_role_permissions(guild_id, role_id):
-    """Получает разрешения для роли"""
     return firebase_db.get_role_permissions(guild_id, role_id)
 
 def get_all_role_permissions(guild_id):
-    """Получает все разрешения ролей для сервера"""
     return firebase_db.get_all_role_permissions(guild_id)
 
 def remove_role_permissions(guild_id, role_id):
-    """Удаляет разрешения для роли"""
     return firebase_db.remove_role_permissions(guild_id, role_id)

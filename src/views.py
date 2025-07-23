@@ -712,14 +712,14 @@ class ApplyButtonView(BaseView):
     @discord.ui.button(label="Подать заявку", style=discord.ButtonStyle.blurple, custom_id="apply_button")
     async def apply_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Проверяем, есть ли пользователь в черном списке
-        from src.database_firebase import has_pending_application, is_blacklisted
+        from src.database_firebase import has_pending_application_with_bot, is_blacklisted
         if is_blacklisted(interaction.guild_id, interaction.user.id):
             await self.handle_error(interaction, "Вы находитесь в черном списке и не можете подавать заявки.")
             return
         
-        # Проверяем, есть ли у пользователя активная заявка
-        if has_pending_application(interaction.guild_id, interaction.user.id):
-            await self.handle_error(interaction, "У вас уже есть активная заявка! Дождитесь её рассмотрения, прежде чем подавать новую.")
+        # Проверяем, есть ли у пользователя активная заявка (с проверкой существования сообщения)
+        if await has_pending_application_with_bot(interaction.guild_id, interaction.user.id, self.bot):
+            await self.handle_error(interaction, "❌ У вас уже есть активная заявка!\n\n📋 Пока ваша заявка не рассмотрена, вы не можете подать новую.\n⏰ Дождитесь решения администрации по вашей текущей заявке.")
             return
         
         settings = get_settings(interaction.guild_id)
